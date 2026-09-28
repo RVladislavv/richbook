@@ -1,0 +1,5 @@
+*.fb2
+*.pdf
+*.epub
+*.djvu
+.DS_Store
