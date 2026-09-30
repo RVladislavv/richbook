@@ -125,7 +125,7 @@ function renderHome() {
   const expectedBlock = expected
     ? `<details class="expected-books">
     <summary class="expected-books-summary">Ожидаемые книги <span class="expected-books-count">${expectedCount}</span></summary>
-    <p class="section-hint">Пока без выжимки · список в <code>expected-books.json</code></p>
+    <p class="section-hint">Пока без выжимки</p>
     <div class="card-list card-list--plain">${expected}</div>
   </details>`
     : "";
