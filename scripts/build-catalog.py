@@ -61,31 +61,20 @@ for folder in sorted(root.iterdir()):
         continue
     index = indexes[0]
     title, author = title_author(index)
-    shpora = sorted(folder.glob("*шпора-автор.md"))
-    shpora_path = shpora[0] if shpora else None
-    chapters = [
-        path
-        for path in folder.glob("*.md")
-        if path != index and path != shpora_path
-    ]
+    chapters = [path for path in folder.glob("*.md") if path != index]
     chapters.sort(key=sort_key)
-    entry = {
-        "id": folder.name,
-        "title": title,
-        "author": author,
-        "index": index.relative_to(root).as_posix(),
-        "chapters": [
-            {"title": chapter_title(path), "path": path.relative_to(root).as_posix()}
-            for path in chapters
-        ],
-    }
-    if shpora_path:
-        entry["authorCheatsheet"] = {
-            "title": "Шпора автора",
-            "path": shpora_path.relative_to(root).as_posix(),
-            "pages": 17,
+    books.append(
+        {
+            "id": folder.name,
+            "title": title,
+            "author": author,
+            "index": index.relative_to(root).as_posix(),
+            "chapters": [
+                {"title": chapter_title(path), "path": path.relative_to(root).as_posix()}
+                for path in chapters
+            ],
         }
-    books.append(entry)
+    )
 
 pains = []
 pain_dir = root / "Боль"

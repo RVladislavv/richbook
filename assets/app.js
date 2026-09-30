@@ -17,9 +17,18 @@ function go(path) {
 }
 
 async function loadCatalog() {
-  const response = await fetch(new URL("catalog.json", base));
-  if (!response.ok) throw new Error("Нет catalog.json");
-  catalog = await response.json();
+  const [catRes, expRes] = await Promise.all([
+    fetch(new URL("catalog.json", base)),
+    fetch(new URL("expected-books.json", base)),
+  ]);
+  if (!catRes.ok) throw new Error("Нет catalog.json");
+  catalog = await catRes.json();
+  if (expRes.ok) {
+    const expected = await expRes.json();
+    catalog.expectedBooks = expected.books || [];
+  } else {
+    catalog.expectedBooks = [];
+  }
 }
 
 async function loadMarkdown(path) {
@@ -31,22 +40,17 @@ async function loadMarkdown(path) {
 
 function findBook(path) {
   return catalog.books.find(
-    (book) =>
-      path === book.index ||
-      path.startsWith(book.id + "/") ||
-      book.authorCheatsheet?.path === path
+    (book) => path === book.index || path.startsWith(book.id + "/")
   );
 }
 
 function bookSequence(book) {
-  const sequence = [{ title: "Оглавление", path: book.index }, ...book.chapters];
-  if (book.authorCheatsheet) {
-    sequence.push({
-      title: book.authorCheatsheet.title,
-      path: book.authorCheatsheet.path,
-    });
-  }
-  return sequence;
+  return [{ title: "Оглавление", path: book.index }, ...book.chapters];
+}
+
+function chapterReadCount(book) {
+  const done = book.chapters.filter((chapter) => ReadProgress.isRead(chapter.path)).length;
+  return { done, total: book.chapters.length };
 }
 
 function resolveLink(fromFile, href) {
@@ -56,156 +60,138 @@ function resolveLink(fromFile, href) {
   return path.endsWith(".md") ? path : null;
 }
 
-function cardRow(path, titleHtml, subtitle) {
+function cardListHead(opts) {
+  const o = opts || {};
+  let countPart = "";
+  if (o.progressText) {
+    countPart = `<span class="count" id="book-read-count" data-book-id="${escapeHtml(o.bookId)}">${escapeHtml(o.progressText)}</span>`;
+  } else if (o.countColumn) {
+    countPart = `<span class="count count--empty" aria-hidden="true"></span>`;
+  }
+  return `<div class="card-list-head">
+    <span class="card-list-head-spacer"></span>
+    <div class="read-aside read-aside--head">
+      ${countPart}
+      <span class="read-col-label">Статус</span>
+    </div>
+  </div>`;
+}
+
+function cardRow(path, titleHtml, subtitle, progressText, bookId, reserveCountColumn) {
   const sub = subtitle ? `<span>${escapeHtml(subtitle)}</span>` : "";
   return ReadProgress.wrapCard(
     `#/${path}`,
     `<strong>${titleHtml}</strong>${sub}`,
-    path
+    path,
+    progressText || "",
+    bookId || "",
+    Boolean(reserveCountColumn)
   );
+}
+
+function simpleCard(path, title) {
+  return `<a class="card" href="#/${path}"><strong>${escapeHtml(title)}</strong></a>`;
+}
+
+function expectedBookCard(book) {
+  const author = book.author ? `<span>${escapeHtml(book.author)}</span>` : "";
+  return `<div class="card card--muted"><strong>${escapeHtml(book.title)}</strong>${author}</div>`;
+}
+
+function progressNote() {
+  return `<p class="footnote"><span class="star" aria-hidden="true">*</span>Прогресс сохраняется в этом браузере.</p>`;
 }
 
 function renderHome() {
   crumb.textContent = "";
   bar.hidden = true;
   const books = catalog.books
-    .map((book) =>
-      cardRow(
+    .map((book) => {
+      const { done, total } = chapterReadCount(book);
+      return cardRow(
         book.index,
         escapeHtml(book.title),
-        book.author
-      ).outerHTML
-    )
+        book.author,
+        total ? `${done}/${total}` : "",
+        book.id
+      ).outerHTML;
+    })
     .join("");
-  const pains = catalog.pains
-    .map((pain) =>
-      cardRow(pain.path, escapeHtml(pain.title), "").outerHTML
-    )
+  const pains = catalog.pains.map((pain) => simpleCard(pain.path, pain.title)).join("");
+  const expected = (catalog.expectedBooks || [])
+    .map((book) => expectedBookCard(book))
     .join("");
+  const expectedCount = (catalog.expectedBooks || []).length;
+  const expectedBlock = expected
+    ? `<details class="expected-books">
+    <summary class="expected-books-summary">Ожидаемые книги <span class="expected-books-count">${expectedCount}</span></summary>
+    <p class="section-hint">Пока без выжимки · список в <code>expected-books.json</code></p>
+    <div class="card-list card-list--plain">${expected}</div>
+  </details>`
+    : "";
   app.innerHTML = `
     <h1>Читальня</h1>
     <p class="section-label">Книги</p>
+    ${cardListHead({ countColumn: true })}
     <div class="card-list">${books}</div>
+    ${expectedBlock}
     <p class="section-label">Боль</p>
-    <div class="card-list">${pains}</div>
+    <div class="card-list card-list--plain">${pains}</div>
+    <a class="card chat-card" href="https://t.me/antiskufchat" target="_blank" rel="noopener"><strong>Чат</strong><span>t.me/antiskufchat</span></a>
+    ${progressNote()}
   `;
-}
-
-function shporaProgressLabel(book) {
-  const sheet = book.authorCheatsheet;
-  if (!sheet?.pages) return "";
-  const done = ReadProgress.countSections(sheet.path, sheet.pages);
-  return `${done}/${sheet.pages} стр.`;
 }
 
 function renderBook(book) {
   crumb.textContent = book.title;
   bar.hidden = true;
 
-  const indexCard = cardRow(book.index, "Оглавление", "вариант 1 — оглавление выжимки");
+  const { done, total } = chapterReadCount(book);
+  const reserveCount = Boolean(total);
+  const indexCard = cardRow(book.index, "Оглавление", "", "", "", reserveCount);
   const chapters = book.chapters
     .map((chapter, index) =>
       cardRow(
         chapter.path,
         `${index + 1}. ${escapeHtml(chapter.title)}`,
-        ""
+        "",
+        "",
+        "",
+        reserveCount
       ).outerHTML
     )
     .join("");
 
-  let variant2 = "";
-  if (book.authorCheatsheet) {
-    const sheet = book.authorCheatsheet;
-    const progress = shporaProgressLabel(book);
-    variant2 = `
-      <p class="section-label">Вариант 2 — шпора автора</p>
-      <div class="card-list">
-        ${cardRow(
-          sheet.path,
-          escapeHtml(sheet.title),
-          `17 стр., индекс при отмазках · ${progress}`
-        ).outerHTML}
-      </div>`;
-  }
-
-  const resetBtn = book.authorCheatsheet
-    ? `<p class="book-actions"><button type="button" class="btn-reset" id="reset-book-progress">Сбросить прогресс по книге</button></p>`
-    : "";
+  const listHead = total
+    ? cardListHead({ progressText: `${done}/${total}`, bookId: book.id })
+    : cardListHead({});
 
   app.innerHTML = `
     <h1>${escapeHtml(book.title)}</h1>
     <p class="section-label">${escapeHtml(book.author)}</p>
-    <p class="section-label">Вариант 1 — выжимка по главам</p>
+    ${listHead}
     <div class="card-list">
       ${indexCard.outerHTML}
       ${chapters}
     </div>
-    ${variant2}
-    ${resetBtn}
+    <p class="book-actions"><button type="button" class="btn-reset" id="reset-book-progress">Сбросить прогресс по книге</button></p>
+    ${progressNote()}
   `;
 
-  const reset = document.querySelector("#reset-book-progress");
-  if (reset) {
-    reset.addEventListener("click", () => {
-      ReadProgress.clearBook(book.id);
-      renderBook(book);
-    });
-  }
-}
-
-function prepareShporaHeadings(article) {
-  article.querySelectorAll("h2").forEach((heading) => {
-    let text = heading.textContent;
-    const anchor = text.match(/\{#(p\d+)\}/);
-    if (anchor) {
-      heading.id = anchor[1];
-      text = text.replace(/\s*\{#p\d+\}/, "");
-      heading.textContent = text;
-    }
-    const page = text.match(/^Стр\.\s*(\d+)/);
-    if (page && !heading.id) {
-      heading.id = `p${page[1].padStart(2, "0")}`;
-    }
+  document.querySelector("#reset-book-progress").addEventListener("click", () => {
+    ReadProgress.clearBook(book.id);
+    renderBook(book);
   });
 }
 
-function decorateShporaSections(article, path, totalPages) {
-  article.querySelectorAll("h2").forEach((heading) => {
-    const page = heading.id?.match(/^p(\d+)$/);
-    if (!page) return;
-
-    const row = document.createElement("div");
-    row.className = "read-row section-read-row";
-    const id = ReadProgress.sectionId(path, Number(page[1]));
-    if (ReadProgress.isRead(id)) row.classList.add("is-read");
-
-    row.append(ReadProgress.createToggle(id, "Стр. прочитана"));
-    heading.parentNode.insertBefore(row, heading);
-  });
-
-  return ReadProgress.countSections(path, totalPages);
-}
-
-function decorateDocumentReadBar(article, path, book) {
+function decorateDocumentReadBar(article, path) {
   const barEl = document.createElement("div");
   barEl.className = "doc-read-bar read-row";
   if (ReadProgress.isRead(path)) barEl.classList.add("is-read");
-
-  const isShpora = book?.authorCheatsheet?.path === path;
-  let summary = "";
-  if (isShpora && book.authorCheatsheet.pages) {
-    const done = ReadProgress.countSections(path, book.authorCheatsheet.pages);
-    summary = `<span class="read-progress-summary">${done}/${book.authorCheatsheet.pages}</span>`;
-    barEl.dataset.shporaPath = path;
-    barEl.dataset.shporaPages = String(book.authorCheatsheet.pages);
-  }
-
-  barEl.innerHTML = summary;
-  const toggle = ReadProgress.createToggle(
-    path,
-    isShpora ? "Вся шпора прочитана" : "Глава прочитана"
-  );
-  barEl.prepend(toggle);
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "read-col-label";
+  statusLabel.textContent = "Статус";
+  barEl.append(statusLabel, ReadProgress.createToggle(path));
   article.prepend(barEl);
 }
 
@@ -215,12 +201,7 @@ async function renderDoc(path) {
   const html = marked.parse(text);
   app.innerHTML = `<article class="prose">${html}</article>`;
   const article = app.querySelector(".prose");
-
-  prepareShporaHeadings(article);
-  if (book?.authorCheatsheet?.path === path) {
-    decorateShporaSections(article, path, book.authorCheatsheet.pages);
-  }
-  decorateDocumentReadBar(article, path, book);
+  if (book) decorateDocumentReadBar(article, path);
 
   app.querySelectorAll("a").forEach((link) => {
     const next = resolveLink(path, link.getAttribute("href"));
@@ -274,11 +255,6 @@ async function route() {
     }
     if (path.endsWith(".md")) {
       await renderDoc(path);
-      if (path.includes("шпора-автор") && location.hash.includes("#p")) {
-        const anchor = location.hash.split("#").pop();
-        const el = document.getElementById(anchor);
-        el?.scrollIntoView({ behavior: "smooth" });
-      }
       return;
     }
     renderHome();
@@ -289,20 +265,13 @@ async function route() {
 }
 
 document.addEventListener("richbook:read-change", () => {
-  const barEl = document.querySelector(".doc-read-bar[data-shpora-path]");
-  if (!barEl) return;
-  const sum = barEl.querySelector(".read-progress-summary");
-  if (!sum) return;
-  const path = barEl.dataset.shporaPath;
-  const pages = Number(barEl.dataset.shporaPages);
-  if (path && pages) {
-    sum.textContent = `${ReadProgress.countSections(path, pages)}/${pages}`;
-  }
-  const bookId = path.split("/")[0];
-  const book = catalog?.books.find((b) => b.id === bookId);
-  if (book && crumb.textContent === book.title && app.querySelector(".card-list")) {
-    renderBook(book);
-  }
+  if (!catalog) return;
+  document.querySelectorAll(".count[data-book-id]").forEach((el) => {
+    const book = catalog.books.find((item) => item.id === el.dataset.bookId);
+    if (!book) return;
+    const { done, total } = chapterReadCount(book);
+    el.textContent = `${done}/${total}`;
+  });
 });
 
 window.addEventListener("hashchange", route);

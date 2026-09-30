@@ -55,14 +55,16 @@ const ReadProgress = (() => {
     if (changed) save(state);
   }
 
-  function createToggle(id, label) {
+  function createToggle(id, labelText) {
+    const aria = labelText || "Прочитано";
     const labelEl = document.createElement("label");
     labelEl.className = "read-toggle";
-    labelEl.title = label || "Прочитано";
+    labelEl.title = aria;
 
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = isRead(id);
+    input.setAttribute("aria-label", aria);
     input.addEventListener("change", () => {
       setRead(id, input.checked);
       labelEl.closest(".card-row, .read-row, .doc-read-bar")?.classList.toggle(
@@ -72,14 +74,11 @@ const ReadProgress = (() => {
       document.dispatchEvent(new CustomEvent("richbook:read-change", { detail: { id } }));
     });
 
-    const span = document.createElement("span");
-    span.textContent = label || "Прочитано";
-
-    labelEl.append(input, span);
+    labelEl.append(input);
     return labelEl;
   }
 
-  function wrapCard(href, innerHtml, readId) {
+  function wrapCard(href, innerHtml, readId, progressText, bookId, reserveCountColumn) {
     const row = document.createElement("div");
     row.className = "card-row";
     if (isRead(readId)) row.classList.add("is-read");
@@ -89,7 +88,23 @@ const ReadProgress = (() => {
     link.href = href;
     link.innerHTML = innerHtml;
 
-    row.append(link, createToggle(readId, ""));
+    const aside = document.createElement("div");
+    aside.className = "read-aside";
+    if (progressText) {
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = progressText;
+      if (bookId) count.dataset.bookId = bookId;
+      aside.append(count);
+    } else if (reserveCountColumn) {
+      const placeholder = document.createElement("span");
+      placeholder.className = "count count--empty";
+      placeholder.setAttribute("aria-hidden", "true");
+      aside.append(placeholder);
+    }
+    aside.append(createToggle(readId));
+
+    row.append(link, aside);
 
     return row;
   }
